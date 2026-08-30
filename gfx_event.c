@@ -21,7 +21,6 @@
 @endverbatim
  */
 
-#include <linux/unistd.h>
 #include <assert.h>
 
 #include "include/gfx_event.h"

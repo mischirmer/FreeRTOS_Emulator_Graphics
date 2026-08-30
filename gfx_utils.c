@@ -30,7 +30,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -56,14 +55,16 @@ struct ring_buf {
 };
 
 static pthread_mutex_t GL_thread_lock = PTHREAD_MUTEX_INITIALIZER;
-static pid_t cur_GL_thread = 0;
+static pthread_t cur_GL_thread;
+static int cur_GL_thread_set = 0;
 
 int gfxUtilIsCurGLThread(void)
 {
     int ret = 0;
 
     pthread_mutex_lock(&GL_thread_lock);
-    ret = (cur_GL_thread == syscall(SYS_gettid)) ? 0 : -1;
+    ret = (cur_GL_thread_set && pthread_equal(cur_GL_thread, pthread_self())) ? 0
+                                                                               : -1;
     pthread_mutex_unlock(&GL_thread_lock);
 
     return ret;
@@ -72,7 +73,8 @@ int gfxUtilIsCurGLThread(void)
 void gfxUtilSetGLThread(void)
 {
     pthread_mutex_lock(&GL_thread_lock);
-    cur_GL_thread = syscall(SYS_gettid);
+    cur_GL_thread = pthread_self();
+    cur_GL_thread_set = 1;
     pthread_mutex_unlock(&GL_thread_lock);
 }
 
@@ -140,10 +142,16 @@ static char *_recurseDirName(const char *dir_name, char *filename, char flags)
                     if (!strcmp(filename, dirp->d_name)) {
                         goto found;
                     }
-                strcpy(wdir, dir_name);
-                strcat(wdir, "/");
-                strcat(wdir, dirp->d_name);
-                ret = _recurseDirName(wdir, filename, flags);
+                {
+                    /* Scratch buffer for the recursive call, kept separate
+                     * from the static `wdir` return buffer: passing `wdir`
+                     * itself as the next call's dir_name would alias it
+                     * with the strcpy() inside that call. */
+                    char subdir[PATH_MAX];
+                    snprintf(subdir, sizeof(subdir), "%s/%s", dir_name,
+                            dirp->d_name);
+                    ret = _recurseDirName(subdir, filename, flags);
+                }
                 if (ret) {
                     return ret;
                 }
@@ -151,9 +159,7 @@ static char *_recurseDirName(const char *dir_name, char *filename, char flags)
             case DT_REG:
                 if (!strcmp(filename, dirp->d_name)) {
 found:
-                    strcpy(wdir, dir_name);
-                    strcat(wdir, "/");
-                    strcat(wdir, filename);
+                    snprintf(wdir, sizeof(wdir), "%s/%s", dir_name, filename);
                     return wdir;
                 }
                 break;

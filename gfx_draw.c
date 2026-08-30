@@ -21,7 +21,7 @@
    ----------------------------------------------------------------------
 @endverbatim
  */
-#include <linux/limits.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
@@ -1544,7 +1544,7 @@ int gfxDrawGetLoadedImageSize(gfx_image_handle_t img, int *w, int *h)
     return 0;
 }
 
-int __attribute_deprecated__ gfxDrawImage(char *filename, signed short x,
+int __attribute__((deprecated)) gfxDrawImage(char *filename, signed short x,
         signed short y)
 {
     INIT_JOB(job, DRAW_IMAGE);
@@ -1786,14 +1786,14 @@ err:
     return -1;
 }
 
-int __attribute_deprecated__ gfxGetImageSize(char *filename, int *w, int *h)
+int __attribute__((deprecated)) gfxGetImageSize(char *filename, int *w, int *h)
 {
     char full_filename[PATH_MAX + 1];
     realpath(filename, full_filename);
     return _getImageSize(full_filename, w, h);
 }
 
-int __attribute_deprecated__ gfxDrawScaledImage(char *filename, signed short x,
+int __attribute__((deprecated)) gfxDrawScaledImage(char *filename, signed short x,
         signed short y, float scale)
 {
     INIT_JOB(job, DRAW_SCALED_IMAGE);
