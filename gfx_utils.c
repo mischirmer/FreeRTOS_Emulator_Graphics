@@ -189,9 +189,14 @@ const char *gfxUtilFindResourceDirectory(void)
         return ret_dir;
     }
     else {
-        strcpy(ret_dir,
-               _recurseDirName(
-                   ".", basename(RESOURCES_DIRECTORY), INCLUDE_DIR_NAMES));
+        char *found = _recurseDirName(
+                          ".", basename(RESOURCES_DIRECTORY), INCLUDE_DIR_NAMES);
+        if (!found) {
+            PRINT_ERROR("Could not locate resource directory '%s'",
+                        RESOURCES_DIRECTORY);
+            return NULL;
+        }
+        strcpy(ret_dir, found);
         return ret_dir;
     }
 }

@@ -1020,8 +1020,6 @@ int gfxDrawUpdateScreen(void)
         free(tmp_job);
     }
 
-    pthread_mutex_unlock(&job_list_lock);
-
     SDL_RenderPresent(renderer);
 
     return 0;
@@ -1029,10 +1027,8 @@ int gfxDrawUpdateScreen(void)
 draw_error:
     free(tmp_job);
 err:
-    pthread_mutex_unlock(&job_list_lock);
     return -1;
 no_jobs:
-    pthread_mutex_unlock(&job_list_lock);
     return 0;
 }
 
@@ -1076,7 +1072,28 @@ int gfxDrawInit(char *path) // Should be called from the Thread running main()
 
     window = SDL_CreateWindow(WINDOW_TITLE, SDL_WINDOWPOS_CENTERED,
                               SDL_WINDOWPOS_CENTERED, screen_width,
-                              screen_height, SDL_WINDOW_OPENGL);
+                              screen_height,
+#ifdef __APPLE__
+                              /*
+                               * Nothing in this file makes a raw GL call
+                               * (drawing goes entirely through
+                               * SDL_Renderer, the GL context below is
+                               * vestigial bookkeeping only -- see
+                               * gfxUtilSetGLThread()). Requesting an
+                               * OpenGL-typed window layer here anyway
+                               * silently breaks presentation on macOS's
+                               * SDL2 (sdl2-compat, itself backed by
+                               * SDL3): SDL_CreateRenderer()'s accelerated
+                               * (Metal) backend can't actually display
+                               * through it -- every SDL call up through
+                               * SDL_RenderPresent() reports success, the
+                               * window just never shows anything.
+                               */
+                              0
+#else
+                              SDL_WINDOW_OPENGL
+#endif
+                             );
 
     if (window == NULL) {
         PRINT_SDL_ERROR("Failed to create %d x %d window '%s'",
