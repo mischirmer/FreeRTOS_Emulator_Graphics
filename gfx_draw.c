@@ -1124,9 +1124,20 @@ err_sdl:
 int gfxDrawBindThread(void) // Should be called from the Drawing Thread
 {
     if (gfxUtilIsCurGLThread() || !renderer) {
+        /*
+         * This GL context is bookkeeping only (see gfxUtilSetGLThread()
+         * below) -- nothing in this file issues raw GL calls, drawing
+         * goes entirely through the SDL_Renderer created below, which
+         * manages its own backend context independently. A failed claim
+         * here therefore isn't fatal to actual rendering, only logged:
+         * on macOS (SDL2 via sdl2-compat/SDL3) this claim can fail with
+         * "The specified window isn't an OpenGL window" even though the
+         * window and renderer work fine -- treating it as fatal used to
+         * skip SDL_CreateRenderer() entirely, leaving the GUI running
+         * with no renderer at all.
+         */
         if (SDL_GL_MakeCurrent(window, context) < 0) {
-            PRINT_SDL_ERROR("Releasing current context failed");
-            goto err_make_current;
+            PRINT_SDL_ERROR("Claiming current context failed");
         }
 
         if (renderer) {
@@ -1169,7 +1180,6 @@ int gfxDrawBindThread(void) // Should be called from the Drawing Thread
 
 err_renderer:
     SDL_DestroyWindow(window);
-err_make_current:
     SDL_GL_DeleteContext(context);
     TTF_Quit();
     SDL_Quit();

@@ -22,6 +22,10 @@
  */
 
 #include <assert.h>
+#ifdef __APPLE__
+#include <pthread.h>
+#include <string.h>
+#endif
 
 #include "include/gfx_event.h"
 #include "task.h"
@@ -64,11 +68,144 @@ static int _initMouse(void)
     return 0;
 }
 
-static void _SDLFetchEvents(void)
+#ifdef __APPLE__
+/*
+ * Cocoa requires window/event operations -- SDL_PollEvent() included --
+ * to run on the process's real main thread. Every FreeRTOS task on this
+ * port is its own native pthread, none of them the real main thread, so
+ * this raw pump runs there instead (see the dedicated main-thread loop
+ * in src/main.c) and stages results in these plain, POSIX-mutex-
+ * protected globals rather than touching FreeRTOS state directly:
+ * xSemaphoreTake/Give and xQueueOverwrite assume a genuine FreeRTOS task
+ * context (this port tracks "the currently running task" per native
+ * pthread for e.g. mutex priority inheritance), which the raw main
+ * thread never has -- calling them from there corrupts that bookkeeping
+ * (observed as an assert in xTaskPriorityDisinherit). _SDLFetchEvents(),
+ * which does own FreeRTOS state, only ever runs on a real task thread on
+ * Apple and drains this stage instead of polling SDL itself.
+ */
+static pthread_mutex_t apple_stage_lock = PTHREAD_MUTEX_INITIALIZER;
+static unsigned char apple_stage_buttons[SDL_NUM_SCANCODES] = { 0 };
+static unsigned char apple_stage_buttons_dirty = 0;
+static signed short apple_stage_mouse_x = 0;
+static signed short apple_stage_mouse_y = 0;
+static signed char apple_stage_mouse_left = 0;
+static signed char apple_stage_mouse_right = 0;
+static signed char apple_stage_mouse_middle = 0;
+static unsigned char apple_stage_mouse_dirty = 0;
+static unsigned char apple_stage_quit = 0;
+
+void gfxEventPumpMainThreadSDL(void)
 {
     SDL_Event event = { 0 };
-    static unsigned char buttons[SDL_NUM_SCANCODES] = { 0 };
+    unsigned char buttons[SDL_NUM_SCANCODES];
     unsigned char send = 0;
+
+    pthread_mutex_lock(&apple_stage_lock);
+    memcpy(buttons, apple_stage_buttons, sizeof(buttons));
+    pthread_mutex_unlock(&apple_stage_lock);
+
+    while (SDL_PollEvent(&event)) {
+        if ((event.type == SDL_QUIT) ||
+            (event.key.keysym.scancode == SDL_SCANCODE_Q)) {
+            pthread_mutex_lock(&apple_stage_lock);
+            apple_stage_quit = 1;
+            pthread_mutex_unlock(&apple_stage_lock);
+        }
+        else if (event.type == SDL_KEYDOWN) {
+            buttons[event.key.keysym.scancode] = 1;
+            send = 1;
+        }
+        else if (event.type == SDL_KEYUP) {
+            buttons[event.key.keysym.scancode] = 0;
+            send = 1;
+        }
+        else if (event.type == SDL_MOUSEMOTION) {
+            pthread_mutex_lock(&apple_stage_lock);
+            apple_stage_mouse_x = event.motion.x;
+            apple_stage_mouse_y = event.motion.y;
+            apple_stage_mouse_dirty = 1;
+            pthread_mutex_unlock(&apple_stage_lock);
+        }
+        else if (event.type == SDL_MOUSEBUTTONDOWN ||
+                event.type == SDL_MOUSEBUTTONUP) {
+            signed char val = (event.type == SDL_MOUSEBUTTONDOWN) ? 1 : 0;
+
+            pthread_mutex_lock(&apple_stage_lock);
+            switch (event.button.button) {
+                case SDL_BUTTON_LEFT:
+                    apple_stage_mouse_left = val;
+                    break;
+                case SDL_BUTTON_RIGHT:
+                    apple_stage_mouse_right = val;
+                    break;
+                case SDL_BUTTON_MIDDLE:
+                    apple_stage_mouse_middle = val;
+                    break;
+                default:
+                    break;
+            }
+            apple_stage_mouse_dirty = 1;
+            pthread_mutex_unlock(&apple_stage_lock);
+        }
+    }
+
+    if (send) {
+        pthread_mutex_lock(&apple_stage_lock);
+        memcpy(apple_stage_buttons, buttons, sizeof(buttons));
+        apple_stage_buttons_dirty = 1;
+        pthread_mutex_unlock(&apple_stage_lock);
+    }
+}
+#endif /* __APPLE__ */
+
+static void _SDLFetchEvents(void)
+{
+    unsigned char send = 0;
+
+#ifdef __APPLE__
+    static unsigned char buttons[SDL_NUM_SCANCODES] = { 0 };
+    unsigned char buttons_dirty;
+    unsigned char mouse_dirty;
+    signed short mouse_x, mouse_y;
+    signed char mouse_left, mouse_right, mouse_middle;
+    unsigned char quit;
+
+    pthread_mutex_lock(&apple_stage_lock);
+    buttons_dirty = apple_stage_buttons_dirty;
+    apple_stage_buttons_dirty = 0;
+    if (buttons_dirty) {
+        memcpy(buttons, apple_stage_buttons, sizeof(buttons));
+    }
+    mouse_dirty = apple_stage_mouse_dirty;
+    apple_stage_mouse_dirty = 0;
+    mouse_x = apple_stage_mouse_x;
+    mouse_y = apple_stage_mouse_y;
+    mouse_left = apple_stage_mouse_left;
+    mouse_right = apple_stage_mouse_right;
+    mouse_middle = apple_stage_mouse_middle;
+    quit = apple_stage_quit;
+    pthread_mutex_unlock(&apple_stage_lock);
+
+    if (quit) {
+        exit(EXIT_SUCCESS);
+    }
+
+    if (mouse_dirty) {
+        if (xSemaphoreTake(mouse.lock, 0) == pdTRUE) {
+            mouse.x = mouse_x;
+            mouse.y = mouse_y;
+            mouse.left_button = mouse_left;
+            mouse.right_button = mouse_right;
+            mouse.middle_button = mouse_middle;
+            xSemaphoreGive(mouse.lock);
+        }
+    }
+
+    send = buttons_dirty;
+#else
+    SDL_Event event = { 0 };
+    static unsigned char buttons[SDL_NUM_SCANCODES] = { 0 };
 
     while (SDL_PollEvent(&event)) {
         if ((event.type == SDL_QUIT) ||
@@ -131,6 +268,7 @@ static void _SDLFetchEvents(void)
             }
         }
     }
+#endif /* __APPLE__ */
 
     if (send) {
         xQueueOverwrite(buttonInputQueue, &buttons);

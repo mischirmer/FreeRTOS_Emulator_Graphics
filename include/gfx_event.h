@@ -142,6 +142,20 @@ signed char gfxEventGetMouseMiddle(void);
  */
 int gfxEventFetchEvents(int flags);
 
+#ifdef __APPLE__
+/*!<
+ * @brief Raw SDL event pump for the real OS main thread on Apple platforms.
+ *
+ * Cocoa requires SDL_PollEvent() to run on the process's actual main
+ * thread, which no FreeRTOS task is on this port (each is its own native
+ * pthread). Call this in a loop from the real main thread instead (see
+ * src/main.c); gfxEventFetchEvents(), called as usual from FreeRTOS
+ * tasks, picks up its results. Not present on other platforms, which
+ * don't need it -- gfxEventFetchEvents() polls SDL directly there.
+ */
+void gfxEventPumpMainThreadSDL(void);
+#endif
+
 /*!<
  * @brief FreeRTOS queue used to obtain a current copy of the keyboard lookup table
  *
